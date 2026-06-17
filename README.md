@@ -1,7 +1,10 @@
 # Claude in a Box
 
-Run Claude Code inside a Docker container, scoped to one project. Two modes:
+Claude Code running with --dangerously-skip-permissions but containerised in docker:
 
+  In Bypass Permissions mode, Claude Code will not ask for your approval before running potentially dangerous commands.
+
+Two modes:
 - **Interactive (default):** pass just the project path and you get the normal Claude Code interface inside the container. Use plan mode, paste in spec sheets, and work back-and-forth — exactly like running Claude locally, but with the container's guardrails. This is the recommended way to work.
 - **Headless (one-shot):** also pass a task string and Claude works on it autonomously, then exits.
 
@@ -10,6 +13,24 @@ Either way, your code changes persist via the mounted volume.
 The container limits the blast radius to **your machine** — Claude can't touch the rest of the host. It does **not** sandbox the code itself: edits write straight through to your project. Your safety net for the code is git (`git reset` / `git checkout .`).
 
 To keep Claude from touching version control or deleting files, **`git`, `rm`, and `rmdir` are hard-blocked** inside the container (see below). You do those yourself afterward.
+
+## Quick start
+
+Assuming you already have Docker installed and a `claude login` session on the host:
+
+```bash
+# 1. Clone and enter the project
+git clone https://github.com/johncarmichael-rgb/claude-in-a-box.git
+cd claude-in-a-box
+
+# 2. Make the run script executable
+chmod +x run.sh entrypoint.sh
+
+# 3. Launch interactive mode on your project (empty task "", instance name "a")
+./run.sh /weave/1-weave-code "" a
+```
+
+That drops you into the normal Claude Code interface scoped to your project. See [Usage](#usage) for headless and parallel modes.
 
 ## Requirements
 
