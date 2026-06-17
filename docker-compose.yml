@@ -1,0 +1,30 @@
+services:
+  claude-in-a-box:
+    build: .
+    container_name: claude-in-a-box
+    # stdin_open + tty give interactive mode a working terminal. Launch with
+    #   docker compose run --rm claude-in-a-box
+    # (not `up`) so you actually attach to the Claude TUI.
+    stdin_open: true
+    tty: true
+    environment:
+      # TASK optional: set it for a headless one-shot run, leave it empty for
+      # the interactive Claude interface.
+      TASK: ${TASK:-}
+      HOST_UID: ${HOST_UID:-1000}
+      HOST_GID: ${HOST_GID:-1000}
+      # Optional fallback if you are NOT relying on the mounted host login:
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    volumes:
+      - ${PROJECT_PATH}:/workspace
+      # Read-only source for auth/config; the container copies it into a writable
+      # per-container home, so it never writes back to your host ~/.claude.
+      - ${HOME}/.claude:/claude-host:ro
+      - ${HOME}/.claude.json:/claude-host.json:ro
+    # Full network access so Claude can install packages.
+    # For full isolation (no outbound network), add:  network_mode: none
+
+# This compose file runs ONE instance. For 2-3 parallel agents use run.sh with
+# distinct instance names (it gives each its own container), e.g.:
+#   ./run.sh ~/code/proj "task A" a
+#   ./run.sh ~/code/proj "task B" b

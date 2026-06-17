@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "ask": [
+      "Bash(git)",
+      "Bash(git:*)",
+      "Bash(rm)",
+      "Bash(rm:*)",
+      "Bash(rmdir)",
+      "Bash(rmdir:*)"
+    ]
+  }
+}
