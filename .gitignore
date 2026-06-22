@@ -1,3 +1,6 @@
+# Per-instance fresh login sessions (--fresh). Contains credentials — never commit.
+.sessions/
+
 # JetBrains IDEs (IntelliJ, WebStorm, PyCharm, etc.)
 .idea/
 *.iml

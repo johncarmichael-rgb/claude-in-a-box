@@ -81,10 +81,40 @@ If not: `claude login`.
 
 > **Parallel caveat:** OAuth tokens rotate on refresh. Several containers refreshing the same token concurrently can invalidate each other and even log out the host. For short tasks this is rarely hit. For heavy parallel use, set `ANTHROPIC_API_KEY` instead — `run.sh` forwards it automatically when present.
 
+### Fresh session (don't inherit the host login)
+
+If you have **multiple Claude Max accounts** and want this box on a different one than your host, pass `--fresh` (alias `--no-inherit`). The host `~/.claude` is then **not** mounted or copied — instead you log in inside the container on first run, and that login is saved per instance under `./.sessions/<instance>/` so it's reused next time.
+
+```bash
+./run.sh --fresh ~/code/weave              # interactive; run /login when it starts
+./run.sh --fresh ~/code/weave "" work      # same, saved under instance "work"
+```
+
+Notes:
+- First `--fresh` run **must be interactive** (no task) so you can complete the login; once saved, headless `--fresh` runs reuse it.
+- `--fresh` deliberately ignores `ANTHROPIC_API_KEY` so the new login isn't shadowed by a host key.
+- `.sessions/` holds real credentials and is git-ignored. Delete `./.sessions/<instance>/` to forget that account.
+
+### Resume a previous session
+
+By default the container is throwaway: its conversation transcript lives in the ephemeral container home and is gone on exit, so there's nothing to resume next run. Pass `--resume` (alias `--continue`) to persist it and pick up where you left off.
+
+```bash
+./run.sh --resume ~/code/weave             # first run seeds; later runs continue
+./run.sh --resume ~/code/weave "keep going on the refactor"   # headless resume
+```
+
+How it works:
+- Transcripts are stored **inside the project** at `<project>/.claude-box/` (Claude writes them there because the project is mounted at `/workspace`). They survive the `--rm` teardown because that directory is the real project on your host.
+- On launch, if a prior transcript exists for the project, Claude is started with `--continue` (most recent session); if none exists, it starts fresh and saves for next time.
+- `.claude-box/` is automatically added to the project's `.git/info/exclude` — a **local, untracked** git ignore, so your committed `.gitignore` is never modified. Delete `<project>/.claude-box/` to forget the history.
+- Note: transcripts can contain code and secrets, the same as the `~/.claude/projects/` files Claude already writes in normal use — this just relocates them into the project.
+- Composes with `--fresh` (fresh login *and* persisted history): `./run.sh --fresh --resume ~/code/weave`.
+
 ## Usage
 
 ```bash
-./run.sh <project_path> ["<task>"] [instance_name]
+./run.sh [--fresh] [--resume] <project_path> ["<task>"] [instance_name]
 ```
 
 ### Interactive (default, recommended)

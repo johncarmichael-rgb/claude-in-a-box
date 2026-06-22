@@ -38,10 +38,24 @@ copy_if_present /claude-host.json "$AGENT_HOME/.claude.json"
 chown -R "$HOST_UID:$HOST_GID" "$AGENT_HOME"
 
 # ----- auth check (the real credential file is .credentials.json) -----
+FRESH="${CLAUDE_FRESH:-0}"
 if [ -f "$AGENT_HOME/.claude/.credentials.json" ]; then
-  echo "Auth: using inherited host login session"
+  if [ "$FRESH" = "1" ]; then
+    echo "Auth: using saved fresh session (host login NOT inherited)"
+  else
+    echo "Auth: using inherited host login session"
+  fi
 elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   echo "Auth: using ANTHROPIC_API_KEY"
+elif [ "$FRESH" = "1" ] && [ -z "$TASK" ]; then
+  # Fresh + interactive + no saved login yet: that's expected on first run. Let
+  # Claude start so you can log in (run /login). It'll be saved for next time.
+  echo "Auth: no saved session yet — log in when Claude starts (use /login)."
+  echo "      Your login is saved under ./.sessions/${CLAUDE_INSTANCE:-?} for next time."
+elif [ "$FRESH" = "1" ]; then
+  echo "ERROR: --fresh headless run needs a saved session or ANTHROPIC_API_KEY." >&2
+  echo "       Start an interactive '--fresh' run first and log in, then re-run." >&2
+  exit 1
 else
   echo "ERROR: No auth found. Either log in on the host with 'claude login'" >&2
   echo "       (so ~/.claude/.credentials.json exists), or pass ANTHROPIC_API_KEY." >&2
@@ -54,6 +68,22 @@ else
   MODE="interactive (normal Claude TUI)"
 fi
 
+# ----- resume handling -----
+# When --resume is set, the project's transcript store is bind-mounted over
+# .claude/projects. If a prior transcript exists, continue it; otherwise start
+# fresh (this run seeds the store for next time).
+RESUME="${CLAUDE_RESUME:-0}"
+RESUME_FLAG=()
+RESUME_NOTE=""
+if [ "$RESUME" = "1" ]; then
+  if find "$AGENT_HOME/.claude/projects" -name '*.jsonl' -type f 2>/dev/null | grep -q .; then
+    RESUME_FLAG=(--continue)
+    RESUME_NOTE="resume (continuing most recent session)"
+  else
+    RESUME_NOTE="resume (no prior session — starting fresh, will be saved)"
+  fi
+fi
+
 HOST_PROJECT_PATH="${HOST_PROJECT_PATH:-}"
 
 echo
@@ -62,6 +92,12 @@ echo " Claude in a Box"
 [ -n "$HOST_PROJECT_PATH" ] && echo " Project: $HOST_PROJECT_PATH"
 echo "          (mounted inside the container as /workspace)"
 echo " Mode:    $MODE"
+if [ "$FRESH" = "1" ]; then
+  echo " Session: fresh (host login NOT inherited; saved per instance)"
+else
+  echo " Session: inherited from host"
+fi
+[ -n "$RESUME_NOTE" ] && echo " History: $RESUME_NOTE"
 [ -n "$TASK" ] && echo " Task:    $TASK"
 echo " git/rm:  DENIED (enforced via managed settings)"
 echo "=========================================="
@@ -83,11 +119,13 @@ if [ -n "$TASK" ]; then
   # Headless: work the task and exit.
   exec gosu "$AGENT_USER" env HOME="$AGENT_HOME" \
     claude --dangerously-skip-permissions \
+           "${RESUME_FLAG[@]}" \
            --append-system-prompt "$GUARD" \
            -p "$TASK"
 else
   # Interactive: drop you into the normal Claude interface, scoped to /workspace.
   exec gosu "$AGENT_USER" env HOME="$AGENT_HOME" \
     claude --dangerously-skip-permissions \
+           "${RESUME_FLAG[@]}" \
            --append-system-prompt "$GUARD"
 fi
