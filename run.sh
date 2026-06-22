@@ -24,7 +24,12 @@ done
 
 PROJECT_PATH="${1:-}"
 TASK="${2:-}"
-INSTANCE="${3:-1}"
+# Instance name is OPTIONAL. If given, the container is named claude-in-a-box-<name>
+# (predictable name; also the slot for --fresh logins under .sessions/<name>). If
+# omitted, we leave --name off so Docker auto-assigns a unique random name — that
+# lets you run N containers in parallel without naming any of them.
+INSTANCE="${3:-}"
+INSTANCE_KEY="${INSTANCE:-default}"   # stable key for .sessions when unnamed
 
 if [ -z "$PROJECT_PATH" ]; then
   cat <<'EOF'
@@ -51,12 +56,16 @@ instance under ./.sessions/<instance> and reused on the next run:
   ./run.sh --fresh ~/code/weave              # interactive; log in when it starts
   ./run.sh --fresh ~/code/weave "" work      # same, saved under instance "work"
 
-Run 2-3 in parallel on the same codebase (each needs a UNIQUE instance name;
-run them in separate terminals, or append & to background them). Pass an empty
-task "" to run interactive instances in parallel:
+Parallel — the instance name is OPTIONAL. Omit it and Docker auto-assigns a
+unique random container name, so you can launch as many as you like with no
+bookkeeping (separate terminals, or append & to background them):
+  ./run.sh ~/code/weave "task A"
+  ./run.sh ~/code/weave "task B"
+  ./run.sh ~/code/weave                # interactive
+Name them explicitly only if you want a predictable container name or a
+specific --fresh login slot (the empty "" is just a placeholder for the task):
   ./run.sh ~/code/weave "task A" a
-  ./run.sh ~/code/weave "task B" b
-  ./run.sh ~/code/weave "" c          # interactive, instance c
+  ./run.sh ~/code/weave "" c           # interactive, named instance c
 
 Note: parallel agents share the same files. Give them non-overlapping work,
 or they may clobber each other's edits.
@@ -80,12 +89,12 @@ if [ "$FRESH" -eq 1 ]; then
   # inherited. Persist this instance's own login on the host instead, so it
   # survives the --rm teardown and is reused next time. We mount it straight
   # over the container's home so Claude reads/writes its login there directly.
-  SESSION_DIR="$SCRIPT_DIR/.sessions/$INSTANCE"
+  SESSION_DIR="$SCRIPT_DIR/.sessions/$INSTANCE_KEY"
   mkdir -p "$SESSION_DIR/.claude"
   # .claude.json must exist as a FILE before mounting, or Docker creates a dir.
   [ -f "$SESSION_DIR/.claude.json" ] || echo '{}' > "$SESSION_DIR/.claude.json"
   EXTRA+=(-e CLAUDE_FRESH=1)
-  EXTRA+=(-e CLAUDE_INSTANCE="$INSTANCE")
+  EXTRA+=(-e CLAUDE_INSTANCE="$INSTANCE_KEY")
   EXTRA+=(-v "$SESSION_DIR/.claude:/home/agent/.claude")
   EXTRA+=(-v "$SESSION_DIR/.claude.json:/home/agent/.claude.json")
 else
@@ -120,8 +129,13 @@ if [ "$RESUME" -eq 1 ]; then
   fi
 fi
 
+# Name the container only if you asked for an instance name. Otherwise leave it
+# off so Docker auto-assigns a unique random name and N parallel runs never clash.
+NAME_ARGS=()
+[ -n "$INSTANCE" ] && NAME_ARGS=(--name "claude-in-a-box-$INSTANCE")
+
 docker run --rm -it \
-  --name "claude-in-a-box-$INSTANCE" \
+  "${NAME_ARGS[@]}" \
   -e TASK="$TASK" \
   -e HOST_PROJECT_PATH="$PROJECT_PATH" \
   -e HOST_UID="$(id -u)" \

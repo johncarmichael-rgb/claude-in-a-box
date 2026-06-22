@@ -135,12 +135,19 @@ Add a task string and Claude works on it autonomously, then exits — the origin
 
 ### Parallel
 
-Two or three on the same codebase (each needs a **unique instance name**; separate terminals, or background with `&`). Pass an empty task `""` to run an interactive instance with a custom name:
+The instance name is **optional**. Omit it and Docker auto-assigns a unique random container name, so you can launch as many as you like with no naming bookkeeping (separate terminals, or background with `&`):
+
+```bash
+./run.sh ~/code/weave "write tests for the auth middleware"
+./run.sh ~/code/weave "add input validation to the CRM model"
+./run.sh ~/code/weave                # interactive
+```
+
+Name them explicitly only when you want a **predictable** container name (e.g. to `docker logs`/`docker stop` a specific one) or a specific `--fresh` login slot. The empty `""` is just a placeholder so the name lands in the 3rd positional slot:
 
 ```bash
 ./run.sh ~/code/weave "write tests for the auth middleware" a
-./run.sh ~/code/weave "add input validation to the CRM model" b
-./run.sh ~/code/weave "" c          # interactive, instance c
+./run.sh ~/code/weave "" c          # interactive, named instance c
 ```
 
 > Parallel agents **share the same files** (you chose the shared-mount model). Give each non-overlapping work, or simultaneous edits to the same file can clobber each other. For collision-free parallelism, switch to a git-worktree-per-agent setup.
