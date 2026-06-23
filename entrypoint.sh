@@ -68,20 +68,36 @@ else
   MODE="interactive (normal Claude TUI)"
 fi
 
-# ----- resume handling -----
-# When --resume is set, the project's transcript store is bind-mounted over
-# .claude/projects. If a prior transcript exists, continue it; otherwise start
-# fresh (this run seeds the store for next time).
+# ----- history / resume handling -----
+# History is RECORDED BY DEFAULT: run.sh bind-mounts the project's transcript
+# store over .claude/projects, so Claude's transcripts outlive the --rm teardown.
+#   default     -> start a NEW session (recorded, resumable later)
+#   --resume    -> continue a recorded session (interactive: pick from Claude's
+#                  native list; headless: most recent)
+#   --ephemeral -> store not mounted; the transcript is discarded on exit
 RESUME="${CLAUDE_RESUME:-0}"
+EPHEMERAL="${CLAUDE_EPHEMERAL:-0}"
 RESUME_FLAG=()
-RESUME_NOTE=""
-if [ "$RESUME" = "1" ]; then
+HISTORY_NOTE=""
+if [ "$EPHEMERAL" = "1" ]; then
+  HISTORY_NOTE="ephemeral (not recorded — discarded on exit)"
+elif [ "$RESUME" = "1" ]; then
   if find "$AGENT_HOME/.claude/projects" -name '*.jsonl' -type f 2>/dev/null | grep -q .; then
-    RESUME_FLAG=(--continue)
-    RESUME_NOTE="resume (continuing most recent session)"
+    if [ -n "$TASK" ]; then
+      # Headless: no interactive TTY for a picker, so continue the most recent.
+      RESUME_FLAG=(--continue)
+      HISTORY_NOTE="resume (headless — continuing most recent session)"
+    else
+      # Interactive: '--resume' (no id) opens Claude's native session picker so
+      # you can scroll the prior sessions and choose which one to continue.
+      RESUME_FLAG=(--resume)
+      HISTORY_NOTE="resume (pick a session from the list)"
+    fi
   else
-    RESUME_NOTE="resume (no prior session — starting fresh, will be saved)"
+    HISTORY_NOTE="resume requested, but no prior session — recording a new one"
   fi
+else
+  HISTORY_NOTE="recording a new session (resume later with --resume)"
 fi
 
 HOST_PROJECT_PATH="${HOST_PROJECT_PATH:-}"
@@ -97,7 +113,7 @@ if [ "$FRESH" = "1" ]; then
 else
   echo " Session: inherited from host"
 fi
-[ -n "$RESUME_NOTE" ] && echo " History: $RESUME_NOTE"
+echo " History: $HISTORY_NOTE"
 [ -n "$TASK" ] && echo " Task:    $TASK"
 echo " git/rm:  DENIED (enforced via managed settings)"
 echo "=========================================="

@@ -7,20 +7,34 @@ set -euo pipefail
 # one instead (handy when you have several Claude Max accounts and want this box
 # logged into a different account than your host). The new login is saved per
 # instance under ./.sessions/<instance> so it survives container restarts.
-# --resume: persist this project's session history so it survives the --rm
-# teardown, and continue the most recent conversation on the next run. History
-# is stored inside the project at <project>/.claude-box/ (auto git-ignored).
+#
+# Session history is RECORDED BY DEFAULT: every run's transcript is persisted
+# inside the project at <project>/.claude-box/ (auto git-ignored) so it survives
+# the --rm teardown and can be resumed later.
+# --resume: instead of starting a new session, pick a recorded one to continue
+#   (interactive shows Claude's native session picker; headless continues the
+#   most recent session).
+# --ephemeral / --no-history: opt OUT of recording. Burnable session — nothing is
+#   written to the project and the transcript is discarded on exit.
 FRESH=0
 RESUME=0
+EPHEMERAL=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --fresh|--no-inherit) FRESH=1; shift ;;
     --resume|--continue) RESUME=1; shift ;;
+    --ephemeral|--no-history) EPHEMERAL=1; shift ;;
     --) shift; break ;;
     -*) echo "Unknown option: $1" >&2; exit 1 ;;
     *) break ;;
   esac
 done
+
+# --resume needs recorded history to resume FROM; --ephemeral throws it away.
+if [ "$RESUME" -eq 1 ] && [ "$EPHEMERAL" -eq 1 ]; then
+  echo "Error: --resume and --ephemeral are mutually exclusive (nothing to resume from a burnable session)." >&2
+  exit 1
+fi
 
 PROJECT_PATH="${1:-}"
 TASK="${2:-}"
@@ -34,19 +48,24 @@ INSTANCE_KEY="${INSTANCE:-default}"   # stable key for .sessions when unnamed
 if [ -z "$PROJECT_PATH" ]; then
   cat <<'EOF'
 
-Usage: ./run.sh [--fresh] [--resume] <project_path> ["<task>"] [instance_name]
+Usage: ./run.sh [--fresh] [--resume|--ephemeral] <project_path> ["<task>"] [instance_name]
 
 Interactive (default) — opens the normal Claude Code interface inside the
-container, scoped to your project. Use this for plan mode, pasting spec
-sheets, and back-and-forth work:
+container, scoped to your project. The session is RECORDED to
+<project>/.claude-box (auto git-ignored) so you can resume it later:
   ./run.sh ~/code/weave
 
-Resume — persist this project's conversation history (in <project>/.claude-box,
-auto git-ignored) and pick up the most recent session next time:
-  ./run.sh --resume ~/code/weave             # first run seeds; later runs continue
+Resume — instead of starting a new session, choose a recorded one to continue.
+Interactive shows Claude's native session picker; headless continues the most
+recent session:
+  ./run.sh --resume ~/code/weave
+
+Ephemeral — opt out of recording. Burnable session: nothing is written to the
+project and the transcript is discarded on exit:
+  ./run.sh --ephemeral ~/code/weave
 
 Headless single run — give a task and Claude works on it autonomously, then
-exits (the original one-shot mode):
+exits (also recorded unless you pass --ephemeral):
   ./run.sh ~/code/weave "add input validation to the OAuth flow"
 
 Fresh session — do NOT inherit the host login. Start a brand new one and log
@@ -107,15 +126,20 @@ else
   [ -n "${ANTHROPIC_API_KEY:-}" ] && EXTRA+=(-e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY")
 fi
 
-if [ "$RESUME" -eq 1 ]; then
-  # Persist session transcripts into the project itself. Claude writes them to
-  # <home>/.claude/projects/<hash>/, and inside the container the hash is always
-  # "-workspace" (cwd is /workspace) — so bind-mounting this dir over projects/
-  # parks the transcripts in the project, where they outlive the --rm container.
+if [ "$EPHEMERAL" -eq 1 ]; then
+  # Burnable session: don't persist anything. Claude writes its transcript to the
+  # container-local home, which the --rm teardown discards.
+  EXTRA+=(-e CLAUDE_EPHEMERAL=1)
+else
+  # DEFAULT: persist session transcripts into the project itself. Claude writes
+  # them to <home>/.claude/projects/<hash>/, and inside the container the hash is
+  # always "-workspace" (cwd is /workspace) — so bind-mounting this dir over
+  # projects/ parks the transcripts in the project, where they outlive the --rm
+  # container and can be resumed on a later run.
   HISTORY_DIR="$PROJECT_PATH/.claude-box"
   mkdir -p "$HISTORY_DIR"
-  EXTRA+=(-e CLAUDE_RESUME=1)
   EXTRA+=(-v "$HISTORY_DIR:/home/agent/.claude/projects")
+  [ "$RESUME" -eq 1 ] && EXTRA+=(-e CLAUDE_RESUME=1)
 
   # Keep the history out of the user's git tree via .git/info/exclude — a LOCAL,
   # untracked ignore, so we never touch their committed .gitignore.
