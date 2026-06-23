@@ -115,7 +115,8 @@ else
 fi
 echo " History: $HISTORY_NOTE"
 [ -n "$TASK" ] && echo " Task:    $TASK"
-echo " git/rm:  DENIED (enforced via managed settings)"
+echo " git:     pull/log/diff ALLOWED; all other git DENIED (managed hook)"
+echo " rm/rmdir: DENIED (enforced via managed settings)"
 echo "=========================================="
 if [ -z "$TASK" ]; then
   echo
@@ -125,12 +126,12 @@ if [ -z "$TASK" ]; then
 fi
 echo
 
-GUARD="git, rm and rmdir are disabled in this sandbox and will be denied. Do not attempt them. Leave version control and file deletion to the human running this container."
+GUARD="In this sandbox you may ONLY use these git commands: 'git pull', 'git log', and 'git diff'. All other git commands (push, commit, add, checkout, reset, merge, etc.) are denied — leave them to the human. rm and rmdir are also disabled. Do not attempt any of the denied commands."
 
 cd /workspace
 
 # Drop to the host UID and set HOME for both modes. --dangerously-skip-permissions
-# gives full autonomy; the managed deny rules still block git/rm regardless.
+# gives full autonomy; the managed git hook and rm deny rules still apply regardless.
 if [ -n "$TASK" ]; then
   # Headless: work the task and exit.
   exec gosu "$AGENT_USER" env HOME="$AGENT_HOME" \

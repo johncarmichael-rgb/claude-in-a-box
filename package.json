@@ -1,0 +1,9 @@
+{
+  "name": "claude-in-a-box",
+  "version": "1.0.0",
+  "description": "Containerised Claude Code with managed guardrails (git/rm guard).",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}

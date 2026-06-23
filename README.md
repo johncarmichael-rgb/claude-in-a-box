@@ -59,7 +59,8 @@ Keep these files in a permanent directory (not inside a project repo):
   Dockerfile
   docker-compose.yml
   entrypoint.sh
-  managed-settings.json   # enforces the git/rm block
+  managed-settings.json   # enforces the rm block + registers the git hook
+  git-guard.js            # PreToolUse hook: allows only git pull/log/diff
   run.sh
 ```
 
@@ -163,11 +164,13 @@ PROJECT_PATH=~/code/weave TASK="fix the flaky test" docker compose run --rm clau
 
 ## What's blocked, and how
 
-`git`, `rm`, and `rmdir` are denied via `managed-settings.json`, baked into the image at `/etc/claude-code/managed-settings.json`. Managed settings are the highest-precedence config: they **cannot** be overridden by your mounted `~/.claude`, by project settings, or by `--dangerously-skip-permissions`. Claude is also told up front (system prompt) that these commands are unavailable, so it won't waste turns retrying.
+`rm` and `rmdir` are blocked via `managed-settings.json`, baked into the image at `/etc/claude-code/managed-settings.json`. Managed settings are the highest-precedence config: they **cannot** be overridden by your mounted `~/.claude`, by project settings, or by `--dangerously-skip-permissions`.
 
-Everything else runs without prompts (`--dangerously-skip-permissions`), so the agent is fully autonomous within those guardrails.
+**git** is handled differently because we want to allow a few read/sync commands. `git pull`, `git log`, and `git diff` are permitted (so the agent can sync the repo and learn from history); **every other git command is denied** — `push`, `commit`, `add`, `checkout`, `reset`, `merge`, and so on. A plain deny rule can't express this: Claude Code evaluates rules `deny → ask → allow` and *specificity doesn't change the order*, so a broad `deny Bash(git:*)` would block `git pull` too and can't carry an allowlist exception. Instead, a `PreToolUse` hook (`git-guard.js`, registered in `managed-settings.json` and baked in at `/etc/claude-code/git-guard.js`) inspects each Bash command and denies any git invocation outside the allowlist. Because it's a managed hook, it holds even under `--dangerously-skip-permissions`. To allow more git subcommands, edit the `ALLOWED` set in `git-guard.js` and rebuild.
 
-To block or allow more commands, edit `managed-settings.json` and rebuild. Pattern form is `Bash(<cmd>:*)`. Note: a deny on `git` won't catch `git` smuggled through `bash -c "git ..."` — fine for a cooperative agent, but if you need airtight enforcement add a `PreToolUse` hook.
+Claude is also told up front (system prompt) which git commands are available, so it won't waste turns retrying denied ones. Everything else runs without prompts (`--dangerously-skip-permissions`), so the agent is fully autonomous within those guardrails.
+
+To block or allow more non-git commands, edit `managed-settings.json` and rebuild. Pattern form is `Bash(<cmd>:*)`. Note: the git guard catches direct invocations (incl. wrappers, env-assignments, and global flags) but not git smuggled through `bash -c "git ..."` — fine for a cooperative agent; tighten `git-guard.js` if you need airtight enforcement.
 
 ## File ownership
 

@@ -1,12 +1,20 @@
 {
   "permissions": {
     "ask": [
-      "Bash(git)",
-      "Bash(git:*)",
       "Bash(rm)",
       "Bash(rm:*)",
       "Bash(rmdir)",
       "Bash(rmdir:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "node /etc/claude-code/git-guard.js" }
+        ]
+      }
     ]
   }
 }

@@ -21,8 +21,13 @@ ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 
 # Managed settings are the HIGHEST precedence config. They cannot be overridden
 # by the mounted ~/.claude, by project settings, or by --dangerously-skip-permissions.
-# This is what hard-blocks git and rm.
+# This hard-blocks rm and registers the PreToolUse git guard below.
 COPY managed-settings.json /etc/claude-code/managed-settings.json
+
+# The git guard, referenced by the PreToolUse hook in managed-settings.json. It
+# allows only `git pull`, `git log`, and `git diff` and denies all other git.
+# Pure Node (no jq) so it works on the slim image with no extra packages.
+COPY git-guard.js /etc/claude-code/git-guard.js
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
