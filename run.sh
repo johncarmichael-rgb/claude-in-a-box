@@ -6,7 +6,9 @@ set -euo pipefail
 # --fresh / --no-inherit: don't inherit the host login session. Start a brand new
 # one instead (handy when you have several Claude Max accounts and want this box
 # logged into a different account than your host). The new login is saved per
-# instance under ./.sessions/<instance> so it survives container restarts.
+# instance under ./.sessions/<instance> so it survives container restarts. On a
+# later run that reuses a saved login, you're shown which account (email) it is
+# and asked to confirm — answer 'n' to drop it and log in as someone else.
 #
 # Session history is RECORDED BY DEFAULT: every run's transcript is persisted
 # inside the project at <project>/.claude-box/ (auto git-ignored) so it survives
@@ -112,6 +114,31 @@ if [ "$FRESH" -eq 1 ]; then
   mkdir -p "$SESSION_DIR/.claude"
   # .claude.json must exist as a FILE before mounting, or Docker creates a dir.
   [ -f "$SESSION_DIR/.claude.json" ] || echo '{}' > "$SESSION_DIR/.claude.json"
+
+  # If this instance already has a saved login, confirm WHICH account it is
+  # before reusing it — so you never run as the wrong Claude account by accident.
+  # The logged-in email lives in .claude.json under oauthAccount.emailAddress.
+  if [ -f "$SESSION_DIR/.claude/.credentials.json" ]; then
+    SAVED_EMAIL="$(node -e 'const fs=require("fs");try{const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const o=j.oauthAccount||{};process.stdout.write(o.emailAddress||o.email||"")}catch(e){}' "$SESSION_DIR/.claude.json" 2>/dev/null || true)"
+    [ -z "$SAVED_EMAIL" ] && SAVED_EMAIL="(unknown account)"
+    # Only prompt when we can actually act on "log in as another": interactive
+    # (no TASK) and a real TTY. Headless can't run /login, so just report it.
+    if [ -z "$TASK" ] && [ -t 0 ]; then
+      printf 'Fresh session "%s" is logged in as: %s\n' "$INSTANCE_KEY" "$SAVED_EMAIL"
+      printf 'Continue as this account? [Y/n] (n = log in as another): '
+      read -r ans
+      if [ "$ans" = "n" ] || [ "$ans" = "N" ]; then
+        echo "Clearing saved login for instance \"$INSTANCE_KEY\" — log in when Claude starts (use /login)."
+        rm -f "$SESSION_DIR/.claude/.credentials.json"
+        echo '{}' > "$SESSION_DIR/.claude.json"
+      else
+        echo "Continuing as $SAVED_EMAIL."
+      fi
+    else
+      echo "Fresh session \"$INSTANCE_KEY\" account: $SAVED_EMAIL"
+    fi
+  fi
+
   EXTRA+=(-e CLAUDE_FRESH=1)
   EXTRA+=(-e CLAUDE_INSTANCE="$INSTANCE_KEY")
   EXTRA+=(-v "$SESSION_DIR/.claude:/home/agent/.claude")
