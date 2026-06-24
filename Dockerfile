@@ -29,6 +29,13 @@ COPY managed-settings.json /etc/claude-code/managed-settings.json
 # Pure Node (no jq) so it works on the slim image with no extra packages.
 COPY git-guard.js /etc/claude-code/git-guard.js
 
+# Bundled Skills. Each subfolder is one skill (a SKILL.md plus optional support
+# files). The entrypoint installs these into the per-container ~/.claude/skills so
+# Claude auto-discovers them and picks the right one per task. Baked in (not
+# mounted) so they're pinned to the image; add a skill under ./skills and the next
+# run.sh build picks it up automatically.
+COPY skills /opt/claude-skills
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

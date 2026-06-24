@@ -35,6 +35,18 @@ if [ -d /claude-host ]; then
   copy_if_present /claude-host/CLAUDE.md         "$AGENT_HOME/.claude/CLAUDE.md"
 fi
 copy_if_present /claude-host.json "$AGENT_HOME/.claude.json"
+
+# ----- install bundled skills -----
+# Skills baked into the image at /opt/claude-skills (from this repo's ./skills).
+# Copy them into ~/.claude/skills AFTER the host-config copy and any home mount,
+# so they're present and auto-discovered in every mode (normal and --fresh, where
+# run.sh mounts over the home). Claude loads them automatically and selects the
+# right one per task based on each skill's description.
+if [ -d /opt/claude-skills ]; then
+  mkdir -p "$AGENT_HOME/.claude/skills"
+  cp -a /opt/claude-skills/. "$AGENT_HOME/.claude/skills/"
+fi
+
 chown -R "$HOST_UID:$HOST_GID" "$AGENT_HOME"
 
 # ----- auth check (the real credential file is .credentials.json) -----
@@ -117,6 +129,10 @@ echo " History: $HISTORY_NOTE"
 [ -n "$TASK" ] && echo " Task:    $TASK"
 echo " git:     pull/log/diff ALLOWED; all other git DENIED (managed hook)"
 echo " rm/rmdir: DENIED (enforced via managed settings)"
+if [ -d "$AGENT_HOME/.claude/skills" ]; then
+  SKILL_COUNT="$(find "$AGENT_HOME/.claude/skills" -maxdepth 2 -name SKILL.md 2>/dev/null | wc -l | tr -d ' ')"
+  [ "$SKILL_COUNT" -gt 0 ] && echo " skills:  $SKILL_COUNT loaded (auto-selected per task)"
+fi
 echo "=========================================="
 if [ -z "$TASK" ]; then
   echo
