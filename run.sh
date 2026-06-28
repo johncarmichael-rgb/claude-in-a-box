@@ -91,6 +91,15 @@ specific --fresh login slot (the empty "" is just a placeholder for the task):
 Note: parallel agents share the same files. Give them non-overlapping work,
 or they may clobber each other's edits.
 
+Resources — at startup you're offered a resource-limit preset (unrestricted /
+low / medium / high) that caps the container's RAM, CPUs and process count so a
+runaway agent can't degrade the host. Your last choice is remembered and used as
+the default next time. Skip the prompt with an env var:
+  CLAUDE_RESOURCES=medium       ./run.sh ~/code/weave
+  CLAUDE_RESOURCES=unrestricted ./run.sh ~/code/weave
+Presets: unrestricted (no caps) | low (2G/1cpu/256) | medium (4G/2cpu/512)
+         | high (8G/4cpu/1024)
+
 Colours — at startup you're offered a colour scheme that recolours THIS
 terminal (background + text) for the session, then restores it on exit, so
 parallel sessions are easy to tell apart. Skip the prompt with an env var:
@@ -185,6 +194,91 @@ else
       printf '%s\n' '.claude-box/' >> "$EXCLUDE"
     fi
   fi
+fi
+
+# ----- resource limits -----
+# By default a container shares the HOST's full CPU, RAM and process table, so a
+# runaway agent (fork bomb, memory leak, busy loop) can degrade the whole machine.
+# Pick a preset here and we pass the matching --memory / --cpus / --pids-limit caps
+# to `docker run`. The choice is REMEMBERED in ./.resource-preset and offered as the
+# default next time. Skip the prompt with CLAUDE_RESOURCES=<name>, e.g.
+#   CLAUDE_RESOURCES=medium ./run.sh ~/code/weave
+#   CLAUDE_RESOURCES=unrestricted ./run.sh ~/code/weave
+# Presets (name -> RAM / CPUs / max processes):
+RES_NAMES=( unrestricted low medium high )
+RES_LABEL=( "Unrestricted — no caps (full host CPU/RAM/processes). A runaway agent CAN degrade the host." \
+            "Low          — 2 GB RAM, 1 CPU,  256 procs. Light tasks; safe to run several in parallel." \
+            "Medium       — 4 GB RAM, 2 CPUs, 512 procs. Balanced default for most work." \
+            "High         — 8 GB RAM, 4 CPUs, 1024 procs. Heavy builds / large test suites." )
+RES_MEM=(  "" "2g"  "4g"  "8g"  )
+RES_CPUS=( "" "1"   "2"   "4"   )
+RES_PIDS=( "" "256" "512" "1024" )
+
+RES_PREF_FILE="$SCRIPT_DIR/.resource-preset"
+SAVED_RES=""
+[ -f "$RES_PREF_FILE" ] && SAVED_RES="$(tr -d '[:space:]' < "$RES_PREF_FILE" 2>/dev/null || true)"
+
+# Resolve a preset name to its index; empty + non-zero exit if not found.
+res_index() {
+  local want="$1" i
+  for i in "${!RES_NAMES[@]}"; do
+    [ "${RES_NAMES[$i]}" = "$want" ] && { printf '%s' "$i"; return 0; }
+  done
+  return 1
+}
+
+RES_CHOICE=""
+if [ -n "${CLAUDE_RESOURCES:-}" ]; then
+  # Non-interactive override.
+  if res_index "$CLAUDE_RESOURCES" >/dev/null; then
+    RES_CHOICE="$CLAUDE_RESOURCES"
+  else
+    echo "Unknown CLAUDE_RESOURCES=\"$CLAUDE_RESOURCES\" — valid: ${RES_NAMES[*]}. Falling back to a prompt/default." >&2
+  fi
+fi
+
+if [ -z "$RES_CHOICE" ] && [ -t 0 ] && [ -t 1 ]; then
+  # Interactive menu. Default to the last saved choice, else medium.
+  RES_DEF_IDX=2
+  if [ -n "$SAVED_RES" ] && RES_DI="$(res_index "$SAVED_RES")"; then RES_DEF_IDX="$RES_DI"; fi
+  echo
+  echo "Pick resource limits for this container (caps a runaway agent can't exceed):"
+  for i in "${!RES_NAMES[@]}"; do
+    mark="  "; [ "$i" -eq "$RES_DEF_IDX" ] && mark="* "
+    printf '  %d)%s%s\n' "$((i+1))" "$mark" "${RES_LABEL[$i]}"
+  done
+  printf 'Choice [%d]: ' "$((RES_DEF_IDX+1))"
+  read -r rpick
+  [ -z "$rpick" ] && rpick=$((RES_DEF_IDX+1))
+  if [[ "$rpick" =~ ^[0-9]+$ ]] && [ "$rpick" -ge 1 ] && [ "$rpick" -le "${#RES_NAMES[@]}" ]; then
+    RES_CHOICE="${RES_NAMES[$((rpick-1))]}"
+  else
+    RES_CHOICE="${RES_NAMES[$RES_DEF_IDX]}"
+    echo "Not a valid choice — using default ($RES_CHOICE)."
+  fi
+fi
+
+# Non-interactive with nothing chosen: reuse the saved preset if any, otherwise
+# default to 'unrestricted' so existing headless/CI runs behave exactly as before.
+if [ -z "$RES_CHOICE" ]; then
+  if [ -n "$SAVED_RES" ] && res_index "$SAVED_RES" >/dev/null; then
+    RES_CHOICE="$SAVED_RES"
+  else
+    RES_CHOICE="unrestricted"
+  fi
+fi
+
+# Remember the choice for next time (best-effort; never fatal).
+printf '%s\n' "$RES_CHOICE" > "$RES_PREF_FILE" 2>/dev/null || true
+
+# Translate the chosen preset into docker flags.
+RES_ARGS=()
+RES_IDX="$(res_index "$RES_CHOICE")"
+if [ -n "${RES_MEM[$RES_IDX]}" ]; then
+  RES_ARGS+=(--memory "${RES_MEM[$RES_IDX]}" --cpus "${RES_CPUS[$RES_IDX]}" --pids-limit "${RES_PIDS[$RES_IDX]}")
+  echo "Resources: $RES_CHOICE — ${RES_MEM[$RES_IDX]} RAM, ${RES_CPUS[$RES_IDX]} CPU, ${RES_PIDS[$RES_IDX]} procs (remembered)"
+else
+  echo "Resources: unrestricted — no CPU/RAM/process caps (remembered)"
 fi
 
 # ----- terminal colour picker -----
@@ -282,5 +376,6 @@ docker run --rm -it \
   -e HOST_UID="$(id -u)" \
   -e HOST_GID="$(id -g)" \
   -v "$PROJECT_PATH:/workspace" \
+  "${RES_ARGS[@]}" \
   "${EXTRA[@]}" \
   "$IMAGE"

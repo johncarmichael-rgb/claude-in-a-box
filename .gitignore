@@ -1,6 +1,9 @@
 # Per-instance fresh login sessions (--fresh). Contains credentials — never commit.
 .sessions/
 
+# Remembered resource-limit preset (last choice from run.sh). Local preference.
+.resource-preset
+
 # JetBrains IDEs (IntelliJ, WebStorm, PyCharm, etc.)
 .idea/
 *.iml

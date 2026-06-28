@@ -180,6 +180,32 @@ The container runs as **your** UID/GID (passed in by `run.sh`), so files Claude 
 
 Full network access by default (so Claude can install packages). For full isolation, add `network_mode: none` to the compose service, or `--network none` to the `docker run` in `run.sh`. Only do this if the task needs no package installs.
 
+## Resource limits
+
+By default a container shares the host's full CPU, RAM and process table, so a
+runaway agent (fork bomb, memory leak, busy loop) can degrade the **whole
+machine**. At startup `run.sh` offers a preset that caps the container via
+`docker run`'s `--memory` / `--cpus` / `--pids-limit`:
+
+| Preset | RAM | CPUs | Max procs | When |
+| --- | --- | --- | --- | --- |
+| `unrestricted` | host | host | host | Trusted heavy work; accept the risk. |
+| `low` | 2 GB | 1 | 256 | Light tasks; safe to run several in parallel. |
+| `medium` | 4 GB | 2 | 512 | Balanced default for most work. |
+| `high` | 8 GB | 4 | 1024 | Heavy builds / large test suites. |
+
+Your last choice is saved to `./.resource-preset` (git-ignored) and used as the
+default next time. Skip the prompt with an env var:
+
+```bash
+CLAUDE_RESOURCES=medium       ./run.sh ~/code/weave
+CLAUDE_RESOURCES=unrestricted ./run.sh ~/code/weave
+```
+
+Non-interactive runs (no TTY) reuse the saved preset, or fall back to
+`unrestricted` if none is saved — so existing headless/CI usage is unchanged
+until you pick a preset.
+
 ## Review changes
 
 ```bash
