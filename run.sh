@@ -90,6 +90,13 @@ specific --fresh login slot (the empty "" is just a placeholder for the task):
 
 Note: parallel agents share the same files. Give them non-overlapping work,
 or they may clobber each other's edits.
+
+Colours — at startup you're offered a colour scheme that recolours THIS
+terminal (background + text) for the session, then restores it on exit, so
+parallel sessions are easy to tell apart. Skip the prompt with an env var:
+  CLAUDE_COLOR=midnight ./run.sh ~/code/weave
+  CLAUDE_COLOR=default  ./run.sh ~/code/weave   # leave colours untouched
+Schemes: default midnight forest plum slate crimson mocha mono
 EOF
   exit 1
 fi
@@ -178,6 +185,89 @@ else
       printf '%s\n' '.claude-box/' >> "$EXCLUDE"
     fi
   fi
+fi
+
+# ----- terminal colour picker -----
+# Running Claude in several terminals at once is confusing when they all look
+# identical. Pick a background + text colour here and we recolour THIS terminal
+# (via OSC escape sequences, understood by every modern terminal emulator) for
+# the lifetime of the session, then restore it on exit. Purely cosmetic — it
+# just tags the window so you can tell parallel sessions apart at a glance.
+#
+# Set CLAUDE_COLOR=<name> to skip the prompt (handy for aliases / scripts), e.g.
+#   CLAUDE_COLOR=midnight ./run.sh ~/code/weave
+# Use CLAUDE_COLOR=default (or run without a TTY) to leave colours untouched.
+COLOR_NAMES=( default midnight forest plum slate crimson mocha mono )
+COLOR_LABEL=( "Default (leave terminal as-is)" \
+              "Midnight  — deep blue"          \
+              "Forest    — dark green"         \
+              "Plum      — dark purple"        \
+              "Slate     — blue-grey"          \
+              "Crimson   — dark red"           \
+              "Mocha     — dark brown"         \
+              "Mono      — black / green"      )
+COLOR_BG=( ""        "#0b1e3b" "#0c2415" "#241033" "#1c2128" "#2a0d0d" "#241a12" "#000000" )
+COLOR_FG=( ""        "#e6f0ff" "#d7f5d7" "#f0e0ff" "#dfe6ee" "#ffdede" "#f5e9d7" "#33ff66" )
+
+# "#rrggbb" -> "r g b" (decimal), for truecolor swatch preview.
+hex_rgb() { local h="${1#\#}"; printf '%d %d %d' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}"; }
+
+CHOSEN_BG=""
+CHOSEN_FG=""
+CHOSEN_NAME=""
+
+# Resolve an index for a scheme name; empty if not found.
+color_index() {
+  local want="$1" i
+  for i in "${!COLOR_NAMES[@]}"; do
+    [ "${COLOR_NAMES[$i]}" = "$want" ] && { printf '%s' "$i"; return 0; }
+  done
+  return 1
+}
+
+if [ -n "${CLAUDE_COLOR:-}" ]; then
+  # Non-interactive override.
+  if idx="$(color_index "$CLAUDE_COLOR")"; then
+    CHOSEN_NAME="${COLOR_NAMES[$idx]}"; CHOSEN_BG="${COLOR_BG[$idx]}"; CHOSEN_FG="${COLOR_FG[$idx]}"
+  else
+    echo "Unknown CLAUDE_COLOR=\"$CLAUDE_COLOR\" — leaving terminal colours unchanged." >&2
+  fi
+elif [ -t 0 ] && [ -t 1 ]; then
+  # Interactive: show a menu with a live swatch of each scheme.
+  echo
+  echo "Pick a colour for this terminal session (tells parallel sessions apart):"
+  for i in "${!COLOR_NAMES[@]}"; do
+    if [ -n "${COLOR_BG[$i]}" ]; then
+      read -r br bgc bb <<<"$(hex_rgb "${COLOR_BG[$i]}")"
+      read -r fr fgc fb <<<"$(hex_rgb "${COLOR_FG[$i]}")"
+      swatch="$(printf '\033[48;2;%d;%d;%dm\033[38;2;%d;%d;%dm  Aa Claude  \033[0m' \
+                "$br" "$bgc" "$bb" "$fr" "$fgc" "$fb")"
+    else
+      swatch="             "
+    fi
+    printf '  %d) %s  %s\n' "$((i+1))" "$swatch" "${COLOR_LABEL[$i]}"
+  done
+  printf 'Choice [1]: '
+  read -r pick
+  [ -z "$pick" ] && pick=1
+  if [[ "$pick" =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "${#COLOR_NAMES[@]}" ]; then
+    idx=$((pick-1))
+    CHOSEN_NAME="${COLOR_NAMES[$idx]}"; CHOSEN_BG="${COLOR_BG[$idx]}"; CHOSEN_FG="${COLOR_FG[$idx]}"
+  else
+    echo "Not a valid choice — leaving terminal colours unchanged."
+  fi
+fi
+
+# Apply the chosen colours to this terminal and arrange to restore them on exit.
+# OSC 11 = background, OSC 10 = foreground; OSC 111/110 reset each to default.
+if [ -n "$CHOSEN_BG" ] || [ -n "$CHOSEN_FG" ]; then
+  reset_colors() { printf '\033]111\007\033]110\007' > /dev/tty 2>/dev/null || true; }
+  trap reset_colors EXIT INT TERM
+  {
+    [ -n "$CHOSEN_BG" ] && printf '\033]11;%s\007' "$CHOSEN_BG"
+    [ -n "$CHOSEN_FG" ] && printf '\033]10;%s\007' "$CHOSEN_FG"
+  } > /dev/tty 2>/dev/null || true
+  echo "Terminal colour: $CHOSEN_NAME (restored on exit)"
 fi
 
 # Name the container only if you asked for an instance name. Otherwise leave it
