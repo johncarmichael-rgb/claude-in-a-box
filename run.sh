@@ -2,6 +2,65 @@
 set -euo pipefail
 # Usage: ./run.sh [--fresh] <project_path> ["<task>"] [instance_name]
 
+IMAGE=claude-in-a-box:latest
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ----- maintenance subcommands: version / update -----
+# This is a rebuild-to-update image: the in-container auto-updater is disabled on
+# purpose (see Dockerfile), so Claude Code is pinned to whatever was baked in at
+# build time. These subcommands surface that version and refresh it on demand.
+#
+#   ./run.sh version            show the Claude Code version inside the image,
+#                               when the image was built, and the latest on npm.
+#   ./run.sh update [version]   rebuild the image, re-pulling Claude Code (the
+#                               'latest' npm tag by default, or a version/tag you
+#                               name, e.g. ./run.sh update 1.2.3).
+#
+# Prints the Claude Code version installed in the image, or "" if it can't (image
+# missing, or `claude --version` failed). Overrides the entrypoint so we run the
+# CLI directly rather than the interactive/headless launcher.
+image_claude_version() {
+  docker run --rm --entrypoint claude "$IMAGE" --version 2>/dev/null | head -n1 || true
+}
+
+case "${1:-}" in
+  version|--version|-v)
+    if command -v node >/dev/null 2>&1; then
+      BOX_VER="$(node -p "require('$SCRIPT_DIR/package.json').version" 2>/dev/null || true)"
+      [ -n "$BOX_VER" ] && echo "claude-in-a-box: $BOX_VER"
+    fi
+    if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+      BUILT="$(docker image inspect -f '{{.Created}}' "$IMAGE" 2>/dev/null || true)"
+      INIMG="$(image_claude_version)"
+      echo "image:           $IMAGE (built ${BUILT:-unknown})"
+      echo "Claude Code:     ${INIMG:-unknown} (installed in image)"
+    else
+      echo "image:           $IMAGE not built yet — run './run.sh update' to build it."
+    fi
+    if command -v npm >/dev/null 2>&1; then
+      LATEST="$(npm view @anthropic-ai/claude-code version 2>/dev/null || true)"
+      [ -n "$LATEST" ] && echo "Latest on npm:   $LATEST"
+    fi
+    exit 0
+    ;;
+  update|upgrade|--update)
+    TARGET="${2:-latest}"
+    BEFORE=""
+    docker image inspect "$IMAGE" >/dev/null 2>&1 && BEFORE="$(image_claude_version)"
+    echo "Updating Claude Code in $IMAGE to '@$TARGET' (rebuilding image)..."
+    # CACHEBUST forces the npm-install layer to re-run even when TARGET is an
+    # unchanged tag like 'latest', so we always fetch the newest matching build.
+    docker build \
+      --build-arg CLAUDE_CODE_VERSION="$TARGET" \
+      --build-arg CACHEBUST="$(date +%s)" \
+      -t "$IMAGE" "$SCRIPT_DIR"
+    AFTER="$(image_claude_version)"
+    echo
+    echo "Claude Code: ${BEFORE:-none} -> ${AFTER:-unknown}"
+    exit 0
+    ;;
+esac
+
 # ----- option parsing -----
 # --fresh / --no-inherit: don't inherit the host login session. Start a brand new
 # one instead (handy when you have several Claude Max accounts and want this box
@@ -106,14 +165,20 @@ parallel sessions are easy to tell apart. Skip the prompt with an env var:
   CLAUDE_COLOR=midnight ./run.sh ~/code/weave
   CLAUDE_COLOR=default  ./run.sh ~/code/weave   # leave colours untouched
 Schemes: default midnight forest plum slate crimson mocha mono
+
+Maintenance:
+  ./run.sh version            show the Claude Code version baked into the image,
+                              its build date, and the latest release on npm.
+  ./run.sh update [version]   rebuild the image, re-pulling Claude Code ('latest'
+                              by default, or a version/tag: ./run.sh update 1.2.3).
+                              This is how you update Claude — the in-container
+                              auto-updater is disabled by design.
 EOF
   exit 1
 fi
 
 # Absolute, validated project path
 PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
-IMAGE=claude-in-a-box:latest
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Build once (no-op if image is already up to date)
 docker build -t "$IMAGE" "$SCRIPT_DIR"

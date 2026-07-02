@@ -68,6 +68,27 @@ Keep these files in a permanent directory (not inside a project repo):
 chmod +x run.sh entrypoint.sh
 ```
 
+## Updating Claude Code
+
+This is a **rebuild-to-update** image: the in-container auto-updater is disabled on purpose (the container runs as a non-root UID that can't write to the global npm prefix anyway), so Claude Code is pinned to whatever was baked in at build time. Two subcommands manage that:
+
+```bash
+./run.sh version            # what's installed vs. what's available
+./run.sh update             # rebuild, pulling the latest Claude Code
+./run.sh update 2.1.198     # or pin to a specific version / npm tag
+```
+
+`version` reports the Claude Code version inside the image, when the image was built, and the latest release on npm:
+
+```
+claude-in-a-box: 1.0.0
+image:           claude-in-a-box:latest (built 2026-06-27T15:40:23+01:00)
+Claude Code:     2.1.195 (Claude Code) (installed in image)
+Latest on npm:   2.1.198
+```
+
+`update` rebuilds the image, forcing a fresh `npm install -g @anthropic-ai/claude-code` (the `latest` tag by default, or the version/tag you name). Only the npm layer is re-pulled — the apt layer stays cached, so it's quick — and it prints the before → after version. Regular `./run.sh <project>` runs keep using the build cache, so day-to-day launches are unaffected until you explicitly update.
+
 ## Authentication
 
 The container inherits your host `claude login` session: `~/.claude` is mounted read-only and **copied into a writable per-container home** at startup, so token refresh works without ever writing back to (or corrupting) your host credentials.

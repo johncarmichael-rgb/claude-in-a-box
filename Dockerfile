@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:24-slim
 
 # git/curl for Claude's own use; gosu lets us drop from root to the host UID at
 # runtime so files Claude writes are owned by you, not root.
@@ -10,12 +10,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code
+# Pin / refresh the Claude Code version baked into the image.
+#   CLAUDE_CODE_VERSION - npm tag or exact version to install ('latest' default).
+#   CACHEBUST           - throwaway value whose only purpose is to invalidate this
+#                         layer's build cache so `./run.sh update` re-pulls a fresh
+#                         copy even when the version string is unchanged (e.g. the
+#                         'latest' tag moved to a newer release). Normal runs leave
+#                         it at the default, so the layer stays cached and fast.
+ARG CLAUDE_CODE_VERSION=latest
+ARG CACHEBUST=0
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
 # This is a pinned, rebuild-to-update image, and the container runs as a non-root
 # UID that can't write to the global npm prefix anyway. Turn off the in-place
 # auto-updater so Claude doesn't try (and fail) to update itself on every launch.
-# Update the agent by rebuilding the image instead.
+# Update the agent by rebuilding the image instead: `./run.sh update`.
 ENV DISABLE_AUTOUPDATER=1
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 
