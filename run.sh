@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-# Usage: ./run.sh [--fresh] <project_path> ["<task>"] [instance_name]
+# Usage: ./run.sh [--fresh] [--safe] <project_path> ["<task>"] [instance_name]
 
 IMAGE=claude-in-a-box:latest
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -80,11 +80,13 @@ esac
 FRESH=0
 RESUME=0
 EPHEMERAL=0
+SKIP_PERMS=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --fresh|--no-inherit) FRESH=1; shift ;;
     --resume|--continue) RESUME=1; shift ;;
     --ephemeral|--no-history) EPHEMERAL=1; shift ;;
+    --safe|--no-skip-permissions|--permissions) SKIP_PERMS=0; shift ;;
     --) shift; break ;;
     -*) echo "Unknown option: $1" >&2; exit 1 ;;
     *) break ;;
@@ -109,7 +111,7 @@ INSTANCE_KEY="${INSTANCE:-default}"   # stable key for .sessions when unnamed
 if [ -z "$PROJECT_PATH" ]; then
   cat <<'EOF'
 
-Usage: ./run.sh [--fresh] [--resume|--ephemeral] <project_path> ["<task>"] [instance_name]
+Usage: ./run.sh [--fresh] [--resume|--ephemeral] [--safe] <project_path> ["<task>"] [instance_name]
 
 Interactive (default) — opens the normal Claude Code interface inside the
 container, scoped to your project. The session is RECORDED to
@@ -124,6 +126,11 @@ recent session:
 Ephemeral — opt out of recording. Burnable session: nothing is written to the
 project and the transcript is discarded on exit:
   ./run.sh --ephemeral ~/code/weave
+
+Safe — drop --dangerously-skip-permissions so Claude prompts for permissions
+normally (the managed git/rm guards still apply either way). Needed for models
+like Fable that refuse to run under --dangerously-skip-permissions:
+  ./run.sh --safe ~/code/weave
 
 Headless single run — give a task and Claude works on it autonomously, then
 exits (also recorded unless you pass --ephemeral):
@@ -437,6 +444,7 @@ NAME_ARGS=()
 docker run --rm -it \
   "${NAME_ARGS[@]}" \
   -e TASK="$TASK" \
+  -e CLAUDE_SKIP_PERMISSIONS="$SKIP_PERMS" \
   -e HOST_PROJECT_PATH="$PROJECT_PATH" \
   -e HOST_UID="$(id -u)" \
   -e HOST_GID="$(id -g)" \

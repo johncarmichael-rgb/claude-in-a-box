@@ -112,6 +112,21 @@ else
   HISTORY_NOTE="recording a new session (resume later with --resume)"
 fi
 
+# ----- permission mode -----
+# By default we pass --dangerously-skip-permissions for full autonomy (the managed
+# git hook and rm deny rules still apply regardless — see managed-settings.json).
+# Some models (e.g. Fable) refuse to start under --dangerously-skip-permissions;
+# set CLAUDE_SKIP_PERMISSIONS=0 (run.sh --safe) to drop the flag so Claude runs
+# with normal permission prompting instead.
+SKIP_PERMS="${CLAUDE_SKIP_PERMISSIONS:-1}"
+PERM_FLAG=()
+if [ "$SKIP_PERMS" = "1" ]; then
+  PERM_FLAG=(--dangerously-skip-permissions)
+  PERM_NOTE="skip-permissions (full autonomy; managed git/rm guards still apply)"
+else
+  PERM_NOTE="normal prompting (--dangerously-skip-permissions OFF)"
+fi
+
 HOST_PROJECT_PATH="${HOST_PROJECT_PATH:-}"
 
 echo
@@ -129,6 +144,7 @@ echo " History: $HISTORY_NOTE"
 [ -n "$TASK" ] && echo " Task:    $TASK"
 echo " git:     pull/log/diff ALLOWED; all other git DENIED (managed hook)"
 echo " rm/rmdir: DENIED (enforced via managed settings)"
+echo " perms:   $PERM_NOTE"
 if [ -d "$AGENT_HOME/.claude/skills" ]; then
   SKILL_COUNT="$(find "$AGENT_HOME/.claude/skills" -maxdepth 2 -name SKILL.md 2>/dev/null | wc -l | tr -d ' ')"
   [ "$SKILL_COUNT" -gt 0 ] && echo " skills:  $SKILL_COUNT loaded (auto-selected per task)"
@@ -147,18 +163,25 @@ GUARD="In this sandbox you may ONLY use these git commands: 'git pull', 'git log
 cd /workspace
 
 # Drop to the host UID and set HOME for both modes. --dangerously-skip-permissions
-# gives full autonomy; the managed git hook and rm deny rules still apply regardless.
+# (default) gives full autonomy; the managed git hook and rm deny rules still apply
+# regardless. With CLAUDE_SKIP_PERMISSIONS=0 the flag is omitted (PERM_FLAG empty)
+# so Claude prompts for permissions normally — needed for models like Fable that
+# refuse to run under --dangerously-skip-permissions.
 if [ -n "$TASK" ]; then
   # Headless: work the task and exit.
+  if [ "$SKIP_PERMS" != "1" ]; then
+    echo " NOTE: headless run with permission prompting ON — Claude may block" >&2
+    echo "       waiting for approvals it can't receive without a TTY." >&2
+  fi
   exec gosu "$AGENT_USER" env HOME="$AGENT_HOME" \
-    claude --dangerously-skip-permissions \
+    claude "${PERM_FLAG[@]}" \
            "${RESUME_FLAG[@]}" \
            --append-system-prompt "$GUARD" \
            -p "$TASK"
 else
   # Interactive: drop you into the normal Claude interface, scoped to /workspace.
   exec gosu "$AGENT_USER" env HOME="$AGENT_HOME" \
-    claude --dangerously-skip-permissions \
+    claude "${PERM_FLAG[@]}" \
            "${RESUME_FLAG[@]}" \
            --append-system-prompt "$GUARD"
 fi

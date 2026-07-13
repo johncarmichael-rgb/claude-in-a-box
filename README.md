@@ -133,10 +133,22 @@ How it works:
 - Note: transcripts can contain code and secrets, the same as the `~/.claude/projects/` files Claude already writes in normal use — this just relocates them into the project.
 - Composes with `--fresh` (fresh login *and* persisted history): `./run.sh --fresh --resume ~/code/weave`.
 
+### Safe mode (permission prompting instead of skip-permissions)
+
+By default the box runs Claude with `--dangerously-skip-permissions` for full autonomy. Some models — notably **Fable** — refuse to start under that flag. Pass `--safe` (aliases `--no-skip-permissions`, `--permissions`) to drop the flag so Claude uses normal permission prompting instead.
+
+```bash
+./run.sh --safe ~/code/weave               # interactive, with permission prompts
+```
+
+- The managed guardrails are **unaffected** — the git allowlist hook and `rm`/`rmdir` deny rules live in `managed-settings.json` and apply whether or not `--dangerously-skip-permissions` is set.
+- Best used **interactively**: with prompting on, a headless (`-p`) run can block waiting for an approval it can't receive without a TTY. `entrypoint.sh` prints a warning if you combine `--safe` with a headless task.
+- Under the hood `run.sh` passes `CLAUDE_SKIP_PERMISSIONS=0` to the container; `entrypoint.sh` then omits the flag.
+
 ## Usage
 
 ```bash
-./run.sh [--fresh] [--resume] <project_path> ["<task>"] [instance_name]
+./run.sh [--fresh] [--resume] [--safe] <project_path> ["<task>"] [instance_name]
 ```
 
 ### Interactive (default, recommended)
@@ -189,7 +201,7 @@ PROJECT_PATH=~/code/weave TASK="fix the flaky test" docker compose run --rm clau
 
 **git** is handled differently because we want to allow a few read/sync commands. `git pull`, `git log`, and `git diff` are permitted (so the agent can sync the repo and learn from history); **every other git command is denied** — `push`, `commit`, `add`, `checkout`, `reset`, `merge`, and so on. A plain deny rule can't express this: Claude Code evaluates rules `deny → ask → allow` and *specificity doesn't change the order*, so a broad `deny Bash(git:*)` would block `git pull` too and can't carry an allowlist exception. Instead, a `PreToolUse` hook (`git-guard.js`, registered in `managed-settings.json` and baked in at `/etc/claude-code/git-guard.js`) inspects each Bash command and denies any git invocation outside the allowlist. Because it's a managed hook, it holds even under `--dangerously-skip-permissions`. To allow more git subcommands, edit the `ALLOWED` set in `git-guard.js` and rebuild.
 
-Claude is also told up front (system prompt) which git commands are available, so it won't waste turns retrying denied ones. Everything else runs without prompts (`--dangerously-skip-permissions`), so the agent is fully autonomous within those guardrails.
+Claude is also told up front (system prompt) which git commands are available, so it won't waste turns retrying denied ones. By default everything else runs without prompts (`--dangerously-skip-permissions`), so the agent is fully autonomous within those guardrails. Pass [`--safe`](#safe-mode-permission-prompting-instead-of-skip-permissions) to drop that flag and get normal permission prompting instead (required for models like Fable) — the guardrails above still hold either way.
 
 To block or allow more non-git commands, edit `managed-settings.json` and rebuild. Pattern form is `Bash(<cmd>:*)`. Note: the git guard catches direct invocations (incl. wrappers, env-assignments, and global flags) but not git smuggled through `bash -c "git ..."` — fine for a cooperative agent; tighten `git-guard.js` if you need airtight enforcement.
 
