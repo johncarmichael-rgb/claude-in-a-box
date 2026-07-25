@@ -26,7 +26,10 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 # auto-updater so Claude doesn't try (and fail) to update itself on every launch.
 # Update the agent by rebuilding the image instead: `./run.sh update`.
 ENV DISABLE_AUTOUPDATER=1
-ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+# Suppress telemetry only. Do NOT set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+# here: it also skips the startup bootstrap fetch that reports which extra models
+# (e.g. Fable) the account can use, leaving them missing from the /model picker.
+ENV DISABLE_TELEMETRY=1
 
 # Managed settings are the HIGHEST precedence config. They cannot be overridden
 # by the mounted ~/.claude, by project settings, or by --dangerously-skip-permissions.
