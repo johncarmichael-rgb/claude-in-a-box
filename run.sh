@@ -23,7 +23,88 @@ image_claude_version() {
   docker run --rm --entrypoint claude "$IMAGE" --version 2>/dev/null | head -n1 || true
 }
 
+usage() {
+  cat <<'EOF'
+
+Usage: ./run.sh [--fresh] [--resume|--ephemeral] [--safe] <project_path> ["<task>"] [instance_name]
+       ./run.sh help|version|update
+
+Interactive (default) — opens the normal Claude Code interface inside the
+container, scoped to your project. The session is RECORDED to
+<project>/.claude-box (auto git-ignored) so you can resume it later:
+  ./run.sh ~/code/weave
+
+Resume — instead of starting a new session, choose a recorded one to continue.
+Interactive shows Claude's native session picker; headless continues the most
+recent session:
+  ./run.sh --resume ~/code/weave
+
+Ephemeral — opt out of recording. Burnable session: nothing is written to the
+project and the transcript is discarded on exit:
+  ./run.sh --ephemeral ~/code/weave
+
+Safe — drop --dangerously-skip-permissions so Claude prompts for permissions
+normally (the managed git/rm guards still apply either way). Needed for models
+like Fable that refuse to run under --dangerously-skip-permissions:
+  ./run.sh --safe ~/code/weave
+
+Headless single run — give a task and Claude works on it autonomously, then
+exits (also recorded unless you pass --ephemeral):
+  ./run.sh ~/code/weave "add input validation to the OAuth flow"
+
+Fresh session — do NOT inherit the host login. Start a brand new one and log
+in inside the container (useful when you have several Claude Max accounts and
+want this box on a different one than your host). The login is saved per
+instance under ./.sessions/<instance> and reused on the next run:
+  ./run.sh --fresh ~/code/weave              # interactive; log in when it starts
+  ./run.sh --fresh ~/code/weave "" work      # same, saved under instance "work"
+
+Parallel — the instance name is OPTIONAL. Omit it and Docker auto-assigns a
+unique random container name, so you can launch as many as you like with no
+bookkeeping (separate terminals, or append & to background them):
+  ./run.sh ~/code/weave "task A"
+  ./run.sh ~/code/weave "task B"
+  ./run.sh ~/code/weave                # interactive
+Name them explicitly only if you want a predictable container name or a
+specific --fresh login slot (the empty "" is just a placeholder for the task):
+  ./run.sh ~/code/weave "task A" a
+  ./run.sh ~/code/weave "" c           # interactive, named instance c
+
+Note: parallel agents share the same files. Give them non-overlapping work,
+or they may clobber each other's edits.
+
+Resources — at startup you're offered a resource-limit preset (unrestricted /
+low / medium / high) that caps the container's RAM, CPUs and process count so a
+runaway agent can't degrade the host. Your last choice is remembered and used as
+the default next time. Skip the prompt with an env var:
+  CLAUDE_RESOURCES=medium       ./run.sh ~/code/weave
+  CLAUDE_RESOURCES=unrestricted ./run.sh ~/code/weave
+Presets: unrestricted (no caps) | low (2G/1cpu/256) | medium (4G/2cpu/512)
+         | high (8G/4cpu/1024)
+
+Colours — at startup you're offered a colour scheme that recolours THIS
+terminal (background + text) for the session, then restores it on exit, so
+parallel sessions are easy to tell apart. Skip the prompt with an env var:
+  CLAUDE_COLOR=midnight ./run.sh ~/code/weave
+  CLAUDE_COLOR=default  ./run.sh ~/code/weave   # leave colours untouched
+Schemes: default midnight forest plum slate crimson mocha mono
+
+Maintenance:
+  ./run.sh help               show this help (also --help / -h).
+  ./run.sh version            show the Claude Code version baked into the image,
+                              its build date, and the latest release on npm.
+  ./run.sh update [version]   rebuild the image, re-pulling Claude Code ('latest'
+                              by default, or a version/tag: ./run.sh update 1.2.3).
+                              This is how you update Claude — the in-container
+                              auto-updater is disabled by design.
+EOF
+}
+
 case "${1:-}" in
+  help|--help|-h)
+    usage
+    exit 0
+    ;;
   version|--version|-v)
     if command -v node >/dev/null 2>&1; then
       BOX_VER="$(node -p "require('$SCRIPT_DIR/package.json').version" 2>/dev/null || true)"
@@ -87,8 +168,9 @@ while [ $# -gt 0 ]; do
     --resume|--continue) RESUME=1; shift ;;
     --ephemeral|--no-history) EPHEMERAL=1; shift ;;
     --safe|--no-skip-permissions|--permissions) SKIP_PERMS=0; shift ;;
+    --help|-h) usage; exit 0 ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; exit 1 ;;
+    -*) echo "Unknown option: $1 (see ./run.sh --help)" >&2; exit 1 ;;
     *) break ;;
   esac
 done
@@ -109,78 +191,7 @@ INSTANCE="${3:-}"
 INSTANCE_KEY="${INSTANCE:-default}"   # stable key for .sessions when unnamed
 
 if [ -z "$PROJECT_PATH" ]; then
-  cat <<'EOF'
-
-Usage: ./run.sh [--fresh] [--resume|--ephemeral] [--safe] <project_path> ["<task>"] [instance_name]
-
-Interactive (default) — opens the normal Claude Code interface inside the
-container, scoped to your project. The session is RECORDED to
-<project>/.claude-box (auto git-ignored) so you can resume it later:
-  ./run.sh ~/code/weave
-
-Resume — instead of starting a new session, choose a recorded one to continue.
-Interactive shows Claude's native session picker; headless continues the most
-recent session:
-  ./run.sh --resume ~/code/weave
-
-Ephemeral — opt out of recording. Burnable session: nothing is written to the
-project and the transcript is discarded on exit:
-  ./run.sh --ephemeral ~/code/weave
-
-Safe — drop --dangerously-skip-permissions so Claude prompts for permissions
-normally (the managed git/rm guards still apply either way). Needed for models
-like Fable that refuse to run under --dangerously-skip-permissions:
-  ./run.sh --safe ~/code/weave
-
-Headless single run — give a task and Claude works on it autonomously, then
-exits (also recorded unless you pass --ephemeral):
-  ./run.sh ~/code/weave "add input validation to the OAuth flow"
-
-Fresh session — do NOT inherit the host login. Start a brand new one and log
-in inside the container (useful when you have several Claude Max accounts and
-want this box on a different one than your host). The login is saved per
-instance under ./.sessions/<instance> and reused on the next run:
-  ./run.sh --fresh ~/code/weave              # interactive; log in when it starts
-  ./run.sh --fresh ~/code/weave "" work      # same, saved under instance "work"
-
-Parallel — the instance name is OPTIONAL. Omit it and Docker auto-assigns a
-unique random container name, so you can launch as many as you like with no
-bookkeeping (separate terminals, or append & to background them):
-  ./run.sh ~/code/weave "task A"
-  ./run.sh ~/code/weave "task B"
-  ./run.sh ~/code/weave                # interactive
-Name them explicitly only if you want a predictable container name or a
-specific --fresh login slot (the empty "" is just a placeholder for the task):
-  ./run.sh ~/code/weave "task A" a
-  ./run.sh ~/code/weave "" c           # interactive, named instance c
-
-Note: parallel agents share the same files. Give them non-overlapping work,
-or they may clobber each other's edits.
-
-Resources — at startup you're offered a resource-limit preset (unrestricted /
-low / medium / high) that caps the container's RAM, CPUs and process count so a
-runaway agent can't degrade the host. Your last choice is remembered and used as
-the default next time. Skip the prompt with an env var:
-  CLAUDE_RESOURCES=medium       ./run.sh ~/code/weave
-  CLAUDE_RESOURCES=unrestricted ./run.sh ~/code/weave
-Presets: unrestricted (no caps) | low (2G/1cpu/256) | medium (4G/2cpu/512)
-         | high (8G/4cpu/1024)
-
-Colours — at startup you're offered a colour scheme that recolours THIS
-terminal (background + text) for the session, then restores it on exit, so
-parallel sessions are easy to tell apart. Skip the prompt with an env var:
-  CLAUDE_COLOR=midnight ./run.sh ~/code/weave
-  CLAUDE_COLOR=default  ./run.sh ~/code/weave   # leave colours untouched
-Schemes: default midnight forest plum slate crimson mocha mono
-
-Maintenance:
-  ./run.sh version            show the Claude Code version baked into the image,
-                              its build date, and the latest release on npm.
-  ./run.sh update [version]   rebuild the image, re-pulling Claude Code ('latest'
-                              by default, or a version/tag: ./run.sh update 1.2.3).
-                              This is how you update Claude — the in-container
-                              auto-updater is disabled by design.
-EOF
+  usage
   exit 1
 fi
 
