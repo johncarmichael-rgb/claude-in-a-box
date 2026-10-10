@@ -94,19 +94,28 @@ HISTORY_NOTE=""
 if [ "$EPHEMERAL" = "1" ]; then
   HISTORY_NOTE="ephemeral (not recorded — discarded on exit)"
 elif [ "$RESUME" = "1" ]; then
-  if find "$AGENT_HOME/.claude/projects" -name '*.jsonl' -type f 2>/dev/null | grep -q .; then
-    if [ -n "$TASK" ]; then
-      # Headless: no interactive TTY for a picker, so continue the most recent.
+  if [ -n "$TASK" ]; then
+    # Headless: no interactive TTY for a picker, so continue the most recent.
+    # '--continue' exits non-zero when nothing is recorded, so only pass it when
+    # a transcript exists — and say so loudly when one doesn't.
+    if find "$AGENT_HOME/.claude/projects" -name '*.jsonl' -type f 2>/dev/null | grep -q .; then
       RESUME_FLAG=(--continue)
       HISTORY_NOTE="resume (headless — continuing most recent session)"
     else
-      # Interactive: '--resume' (no id) opens Claude's native session picker so
-      # you can scroll the prior sessions and choose which one to continue.
-      RESUME_FLAG=(--resume)
-      HISTORY_NOTE="resume (pick a session from the list)"
+      HISTORY_NOTE="resume requested, but no prior session — recording a new one"
+      echo "WARNING: --resume requested but <project>/.claude-box has no transcripts;" >&2
+      echo "         running the task as a NEW session instead." >&2
     fi
   else
-    HISTORY_NOTE="resume requested, but no prior session — recording a new one"
+    # Interactive: ALWAYS pass '--resume' (no id). It opens Claude's native
+    # session picker; if nothing is recorded Claude shows "No conversations
+    # found" rather than silently dropping you into a fresh, empty session.
+    RESUME_FLAG=(--resume)
+    if find "$AGENT_HOME/.claude/projects" -name '*.jsonl' -type f 2>/dev/null | grep -q .; then
+      HISTORY_NOTE="resume (pick a session from the list)"
+    else
+      HISTORY_NOTE="resume requested, but <project>/.claude-box has NO transcripts — expect 'No conversations found'"
+    fi
   fi
 else
   HISTORY_NOTE="recording a new session (resume later with --resume)"

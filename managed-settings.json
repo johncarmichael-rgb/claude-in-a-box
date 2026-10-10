@@ -1,4 +1,5 @@
 {
+  "cleanupPeriodDays": 3650,
   "permissions": {
     "ask": [
       "Bash(rm)",

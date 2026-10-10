@@ -128,7 +128,8 @@ By default the container is throwaway: its conversation transcript lives in the 
 
 How it works:
 - Transcripts are stored **inside the project** at `<project>/.claude-box/` (Claude writes them there because the project is mounted at `/workspace`). They survive the `--rm` teardown because that directory is the real project on your host.
-- On launch, if a prior transcript exists for the project, Claude is started with `--continue` (most recent session); if none exists, it starts fresh and saves for next time.
+- On launch, interactive mode always starts Claude with `--resume`, which opens its native session picker. If the project has no recorded transcripts Claude shows "No conversations found" instead of silently starting a fresh session. Headless mode uses `--continue` (most recent session) when a transcript exists, and warns loudly if none does.
+- Claude Code normally deletes transcripts older than 30 days from its projects directory, and `.claude-box/` *is* that directory inside the container. The image pins `cleanupPeriodDays` to 3650 in `managed-settings.json` so recorded sessions are never pruned. Rebuild the image (`./run.sh update`) to pick that up.
 - `.claude-box/` is automatically added to the project's `.git/info/exclude` — a **local, untracked** git ignore, so your committed `.gitignore` is never modified. Delete `<project>/.claude-box/` to forget the history.
 - Note: transcripts can contain code and secrets, the same as the `~/.claude/projects/` files Claude already writes in normal use — this just relocates them into the project.
 - Composes with `--fresh` (fresh login *and* persisted history): `./run.sh --fresh --resume ~/code/weave`.
