@@ -56,8 +56,20 @@ prompt_and_save_token() {
     printf "Run 'claude setup-token' now? [Y/n]: "
     read -r ans
     if [ "$ans" != "n" ] && [ "$ans" != "N" ]; then
-      claude setup-token || echo "(setup-token exited non-zero — you can still paste a token below)" >&2
+      # setup-token prints the token in the TERMINAL (the browser page only
+      # says "you can close this window"), so capture it from the output
+      # instead of asking the user to copy it. It's an Ink TUI that wants a
+      # real TTY on stdout, so we record it through a pty with 'script'.
+      local tok
+      tok="$(run_setup_token_capturing)"
+      if [ -n "$tok" ]; then
+        echo
+        echo "Captured the token from 'claude setup-token' output."
+        save_token "$tok"
+        return 0
+      fi
       echo
+      echo "(Couldn't find a token in the output — copy the sk-ant-oat… line printed above, if any.)"
     fi
   else
     echo "('claude' is not on this host's PATH — run 'claude setup-token' wherever it is installed.)"
@@ -75,9 +87,51 @@ prompt_and_save_token() {
     sk-ant-oat*) ;;
     *) echo "Warning: token doesn't look like a 'claude setup-token' token (expected sk-ant-oat…). Saving anyway." >&2 ;;
   esac
-  ( umask 077; printf '%s\n' "$tok" > "$TOKEN_FILE" )
+  save_token "$tok"
+}
+
+# Writes the token to TOKEN_FILE (0600) and says so.
+save_token() {
+  ( umask 077; printf '%s\n' "$1" > "$TOKEN_FILE" )
   chmod 600 "$TOKEN_FILE" 2>/dev/null || true
   echo "Saved to $TOKEN_FILE (git-ignored). Replace with './run.sh token', forget with './run.sh token clear'."
+}
+
+# Runs 'claude setup-token' on the user's terminal exactly as normal (browser
+# flow, output and all) while recording what it prints through a pty, then
+# prints the sk-ant-oat… token it displayed — or "" if none was found.
+run_setup_token_capturing() {
+  local cap tok
+  cap="$(mktemp)" || return 0
+  if script --version >/dev/null 2>&1; then
+    # util-linux (Linux): -q quiet, -c command, logfile last.
+    script -q -c "claude setup-token" "$cap" >/dev/tty 2>&1 </dev/tty || true
+  elif command -v script >/dev/null 2>&1; then
+    # BSD / macOS: logfile first, then the command.
+    script -q "$cap" claude setup-token >/dev/tty 2>&1 </dev/tty || true
+  else
+    # No pty recorder — run plainly; the caller falls back to a paste prompt.
+    claude setup-token >/dev/tty 2>&1 </dev/tty || true
+    rm -f "$cap"
+    return 0
+  fi
+  # The TUI wraps long lines to the terminal width, so a narrow terminal can
+  # split the token across lines. Turn cursor-movement/erase escapes (TUI
+  # redraws) into paragraph breaks, drop colour escapes and CRs, trim each
+  # line, join each blank-line-separated paragraph back into one line (the
+  # token is printed as a paragraph of its own), then keep the longest match
+  # (redraws can leave partial copies in the recording). Plain sed/awk only,
+  # written to work with both GNU and BSD/macOS tools.
+  local esc; esc="$(printf '\033')"
+  tok="$(sed -e "s/${esc}\[[0-9;?]*[ABCDEFGHJKST]/\\
+\\
+/g" -e "s/${esc}\[[0-9;?]*[A-Za-z]//g" -e "s/${esc}[()][A-Za-z0-9]//g" -e 's/\r//g' "$cap" \
+        | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+        | awk 'BEGIN{RS="";ORS="\n"}{gsub(/\n/,""); print}' \
+        | grep -a -o -E 'sk-ant-oat[0-9]*-[A-Za-z0-9_-]{40,}' \
+        | awk '{ if (length($0) > length(best)) best=$0 } END{ print best }')" || true
+  rm -f "$cap"
+  printf '%s' "$tok"
 }
 
 usage() {
@@ -113,8 +167,9 @@ Auth (default) — the container authenticates with a LONG-LIVED token from
 'claude setup-token' on the host, NOT your host's ~/.claude/.credentials.json.
 (Copying that file forks the OAuth refresh chain: refresh tokens are single-use,
 so the first in-container refresh logs out the host and every later run.) On the
-first run you're asked to paste the token; it's saved to ./.oauth-token (0600,
-git-ignored) and reused. Or export CLAUDE_CODE_OAUTH_TOKEN to skip the file.
+first run it offers to run 'claude setup-token' for you and captures the token
+it prints in the terminal (the browser never shows it; nothing to copy). It's
+saved to ./.oauth-token (0600, git-ignored) and reused. Or export CLAUDE_CODE_OAUTH_TOKEN to skip the file.
 Your host user config (settings.json, CLAUDE.md, .claude.json) is still inherited.
   ./run.sh token              set / replace the saved token
   ./run.sh token clear        forget it

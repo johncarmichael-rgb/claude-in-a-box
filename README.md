@@ -30,7 +30,7 @@ chmod +x run.sh entrypoint.sh
 ./run.sh /weave/1-weave-code "" a
 ```
 
-The first run asks for a long-lived auth token (it offers to run `claude setup-token` for you, then you paste the result). It's saved to `./.oauth-token` and reused from then on — see [Authentication](#authentication).
+The first run asks for a long-lived auth token: it offers to run `claude setup-token` for you and picks the token out of what it prints in the terminal, so there is nothing to copy. (The browser page only says "you can close this window"; the token itself is printed in the terminal.) It's saved to `./.oauth-token` and reused from then on — see [Authentication](#authentication).
 
 That drops you into the normal Claude Code interface scoped to your project. See [Usage](#usage) for headless and parallel modes.
 
@@ -101,7 +101,7 @@ Why not just copy the host login? That file holds a short-lived (~8h) access tok
 
 1. `CLAUDE_CODE_OAUTH_TOKEN` in your environment (handy for aliases / CI).
 2. `./.oauth-token` — saved by `run.sh` on first use (mode 0600, git-ignored).
-3. Otherwise it prompts: offers to run `claude setup-token` for you, then asks you to paste the token, and saves it.
+3. Otherwise it prompts: offers to run `claude setup-token` for you, captures the token from its terminal output (the browser page never shows it), and saves it. If no token can be found in the output it falls back to asking you to paste one.
 
 Manage the saved token:
 
