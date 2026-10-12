@@ -25,12 +25,14 @@ else
   useradd -u "$HOST_UID" -g "$HOST_GID" -M -d "$AGENT_HOME" -s /bin/bash agent
 fi
 
-# ----- copy auth + user config from the read-only host mount into a writable -----
-# per-container home. Token refresh then works AND never writes back to the host,
-# so a container can't corrupt your host credential file.
+# ----- copy USER CONFIG (not credentials) from the read-only host mount into a -----
+# writable per-container home. The host's .credentials.json is deliberately NOT
+# copied: it holds a single-use OAuth refresh token, so a copy that refreshes in
+# here would invalidate the host's login (and every later run). Auth for
+# non---fresh runs comes from CLAUDE_CODE_OAUTH_TOKEN instead (a long-lived
+# 'claude setup-token' token that never refreshes) — see run.sh.
 copy_if_present() { [ -e "$1" ] && cp -a "$1" "$2" || true; }
 if [ -d /claude-host ]; then
-  copy_if_present /claude-host/.credentials.json "$AGENT_HOME/.claude/.credentials.json"
   copy_if_present /claude-host/settings.json     "$AGENT_HOME/.claude/settings.json"
   copy_if_present /claude-host/CLAUDE.md         "$AGENT_HOME/.claude/CLAUDE.md"
 fi
@@ -49,14 +51,14 @@ fi
 
 chown -R "$HOST_UID:$HOST_GID" "$AGENT_HOME"
 
-# ----- auth check (the real credential file is .credentials.json) -----
+# ----- auth check -----
+# --fresh: a saved in-container login (.credentials.json on the mounted home).
+# default: CLAUDE_CODE_OAUTH_TOKEN (long-lived setup-token), else ANTHROPIC_API_KEY.
 FRESH="${CLAUDE_FRESH:-0}"
-if [ -f "$AGENT_HOME/.claude/.credentials.json" ]; then
-  if [ "$FRESH" = "1" ]; then
-    echo "Auth: using saved fresh session (host login NOT inherited)"
-  else
-    echo "Auth: using inherited host login session"
-  fi
+if [ "$FRESH" = "1" ] && [ -f "$AGENT_HOME/.claude/.credentials.json" ]; then
+  echo "Auth: using saved fresh session (host login NOT inherited)"
+elif [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  echo "Auth: using long-lived host token (CLAUDE_CODE_OAUTH_TOKEN from 'claude setup-token')"
 elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   echo "Auth: using ANTHROPIC_API_KEY"
 elif [ "$FRESH" = "1" ] && [ -z "$TASK" ]; then
@@ -69,8 +71,9 @@ elif [ "$FRESH" = "1" ]; then
   echo "       Start an interactive '--fresh' run first and log in, then re-run." >&2
   exit 1
 else
-  echo "ERROR: No auth found. Either log in on the host with 'claude login'" >&2
-  echo "       (so ~/.claude/.credentials.json exists), or pass ANTHROPIC_API_KEY." >&2
+  echo "ERROR: No auth found. Run 'claude setup-token' on the host and give run.sh" >&2
+  echo "       the token ('./run.sh token', or export CLAUDE_CODE_OAUTH_TOKEN)," >&2
+  echo "       or pass ANTHROPIC_API_KEY." >&2
   exit 1
 fi
 

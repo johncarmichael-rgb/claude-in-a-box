@@ -23,11 +23,68 @@ image_claude_version() {
   docker run --rm --entrypoint claude "$IMAGE" --version 2>/dev/null | head -n1 || true
 }
 
+# ----- long-lived auth token (non---fresh runs) -----
+# Default (inherited) runs authenticate with a long-lived OAuth token minted by
+# 'claude setup-token' on the host and passed in as CLAUDE_CODE_OAUTH_TOKEN. We
+# deliberately do NOT hand the container the host's ~/.claude/.credentials.json:
+# that file holds a short-lived (~8h) access token plus a SINGLE-USE refresh
+# token. A copy that refreshes inside the container rotates the refresh token,
+# the new one dies with the --rm container, and the host's copy is now invalid —
+# so both the host and every later run land on /login. A setup-token never
+# refreshes, so there is no chain to fork.
+#
+# Resolution order: $CLAUDE_CODE_OAUTH_TOKEN env > ./.oauth-token file > prompt.
+TOKEN_FILE="$SCRIPT_DIR/.oauth-token"
+
+# Prints the saved token, or "" if none.
+saved_oauth_token() {
+  [ -f "$TOKEN_FILE" ] && tr -d '[:space:]' < "$TOKEN_FILE" 2>/dev/null || true
+}
+
+# Interactively obtain a token (offering to run 'claude setup-token' if the CLI
+# is on the host), validate it loosely, and save it 0600. Needs a TTY.
+prompt_and_save_token() {
+  if ! [ -t 0 ]; then
+    echo "Error: no auth token and no TTY to ask for one." >&2
+    echo "       Run './run.sh token' interactively once, or export CLAUDE_CODE_OAUTH_TOKEN." >&2
+    return 1
+  fi
+  echo
+  echo "Non-fresh runs need a LONG-LIVED token from 'claude setup-token' (run on the host)."
+  echo "It lasts ~1 year and never refreshes, so it can't log out your host login."
+  if command -v claude >/dev/null 2>&1; then
+    printf "Run 'claude setup-token' now? [Y/n]: "
+    read -r ans
+    if [ "$ans" != "n" ] && [ "$ans" != "N" ]; then
+      claude setup-token || echo "(setup-token exited non-zero — you can still paste a token below)" >&2
+      echo
+    fi
+  else
+    echo "('claude' is not on this host's PATH — run 'claude setup-token' wherever it is installed.)"
+  fi
+  printf 'Paste the token (input hidden): '
+  local tok
+  read -r -s tok
+  echo
+  tok="$(printf '%s' "$tok" | tr -d '[:space:]')"
+  if [ -z "$tok" ]; then
+    echo "Error: empty token." >&2
+    return 1
+  fi
+  case "$tok" in
+    sk-ant-oat*) ;;
+    *) echo "Warning: token doesn't look like a 'claude setup-token' token (expected sk-ant-oat…). Saving anyway." >&2 ;;
+  esac
+  ( umask 077; printf '%s\n' "$tok" > "$TOKEN_FILE" )
+  chmod 600 "$TOKEN_FILE" 2>/dev/null || true
+  echo "Saved to $TOKEN_FILE (git-ignored). Replace with './run.sh token', forget with './run.sh token clear'."
+}
+
 usage() {
   cat <<'EOF'
 
 Usage: ./run.sh [--fresh] [--resume|--ephemeral] [--safe] <project_path> ["<task>"] [instance_name]
-       ./run.sh help|version|update
+       ./run.sh help|version|update|token
 
 Interactive (default) — opens the normal Claude Code interface inside the
 container, scoped to your project. The session is RECORDED to
@@ -52,8 +109,18 @@ Headless single run — give a task and Claude works on it autonomously, then
 exits (also recorded unless you pass --ephemeral):
   ./run.sh ~/code/weave "add input validation to the OAuth flow"
 
-Fresh session — do NOT inherit the host login. Start a brand new one and log
-in inside the container (useful when you have several Claude Max accounts and
+Auth (default) — the container authenticates with a LONG-LIVED token from
+'claude setup-token' on the host, NOT your host's ~/.claude/.credentials.json.
+(Copying that file forks the OAuth refresh chain: refresh tokens are single-use,
+so the first in-container refresh logs out the host and every later run.) On the
+first run you're asked to paste the token; it's saved to ./.oauth-token (0600,
+git-ignored) and reused. Or export CLAUDE_CODE_OAUTH_TOKEN to skip the file.
+Your host user config (settings.json, CLAUDE.md, .claude.json) is still inherited.
+  ./run.sh token              set / replace the saved token
+  ./run.sh token clear        forget it
+
+Fresh session — do NOT inherit the host login or token. Start a brand new one
+and log in inside the container (useful when you have several Claude Max accounts and
 want this box on a different one than your host). The login is saved per
 instance under ./.sessions/<instance> and reused on the next run:
   ./run.sh --fresh ~/code/weave              # interactive; log in when it starts
@@ -97,6 +164,8 @@ Maintenance:
                               by default, or a version/tag: ./run.sh update 1.2.3).
                               This is how you update Claude — the in-container
                               auto-updater is disabled by design.
+  ./run.sh token [clear]      set/replace (or forget) the long-lived auth token
+                              used by non---fresh runs (from 'claude setup-token').
 EOF
 }
 
@@ -123,6 +192,17 @@ case "${1:-}" in
       [ -n "$LATEST" ] && echo "Latest on npm:   $LATEST"
     fi
     exit 0
+    ;;
+  token|--token|login)
+    case "${2:-}" in
+      clear|--clear|forget)
+        if [ -f "$TOKEN_FILE" ]; then rm -f "$TOKEN_FILE"; echo "Forgot saved token ($TOKEN_FILE)."
+        else echo "No saved token to forget."; fi
+        exit 0
+        ;;
+      "") prompt_and_save_token; exit $? ;;
+      *) echo "Unknown: ./run.sh token $2 (use './run.sh token' or './run.sh token clear')" >&2; exit 1 ;;
+    esac
     ;;
   update|upgrade|--update)
     TARGET="${2:-latest}"
@@ -243,13 +323,27 @@ if [ "$FRESH" -eq 1 ]; then
   EXTRA+=(-v "$SESSION_DIR/.claude:/home/agent/.claude")
   EXTRA+=(-v "$SESSION_DIR/.claude.json:/home/agent/.claude.json")
 else
-  # Inherit the host login session + user config (read-only; copied into a
-  # writable per-container home by the entrypoint).
+  # Inherit the host USER CONFIG only (settings.json, CLAUDE.md, .claude.json),
+  # mounted read-only and copied into a writable per-container home by the
+  # entrypoint. The host's .credentials.json is NOT used — see the token notes
+  # above TOKEN_FILE for why (single-use refresh tokens).
   EXTRA+=(-v "$HOME/.claude:/claude-host:ro")
   [ -f "$HOME/.claude.json" ] && EXTRA+=(-v "$HOME/.claude.json:/claude-host.json:ro")
-  # API key is only a fallback for inherited mode. In --fresh mode we omit it on
-  # purpose so the brand new interactive login isn't shadowed by a host key.
-  [ -n "${ANTHROPIC_API_KEY:-}" ] && EXTRA+=(-e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY")
+
+  # Auth: long-lived setup-token (env, then saved file, then prompt), falling
+  # back to ANTHROPIC_API_KEY. Both are omitted in --fresh mode on purpose so a
+  # brand new in-container login isn't shadowed by a host credential.
+  OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-}"
+  [ -z "$OAUTH_TOKEN" ] && OAUTH_TOKEN="$(saved_oauth_token)"
+  if [ -z "$OAUTH_TOKEN" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    prompt_and_save_token || exit 1
+    OAUTH_TOKEN="$(saved_oauth_token)"
+  fi
+  if [ -n "$OAUTH_TOKEN" ]; then
+    EXTRA+=(-e CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN")
+  else
+    EXTRA+=(-e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY")
+  fi
 fi
 
 if [ "$EPHEMERAL" -eq 1 ]; then

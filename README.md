@@ -16,7 +16,7 @@ To keep Claude from touching version control or deleting files, **`git`, `rm`, a
 
 ## Quick start
 
-Assuming you already have Docker installed and a `claude login` session on the host:
+Assuming you already have Docker installed and Claude Code logged in on the host:
 
 ```bash
 # 1. Clone and enter the project
@@ -30,6 +30,8 @@ chmod +x run.sh entrypoint.sh
 ./run.sh /weave/1-weave-code "" a
 ```
 
+The first run asks for a long-lived auth token (it offers to run `claude setup-token` for you, then you paste the result). It's saved to `./.oauth-token` and reused from then on — see [Authentication](#authentication).
+
 That drops you into the normal Claude Code interface scoped to your project. See [Usage](#usage) for headless and parallel modes.
 
 ## Requirements
@@ -38,7 +40,7 @@ This runs Claude Code **inside Docker**, so you need Docker on the host:
 
 - **Docker Engine** (or Docker Desktop) with the **`docker compose`** plugin — `run.sh` and the compose flow both rely on it.
 - The Docker daemon running, and your user able to talk to it (`docker ps` should work without `sudo`).
-- A working `claude login` session on the host (see [Authentication](#authentication)).
+- Claude Code installed and logged in on the host, so you can run `claude setup-token` (see [Authentication](#authentication)).
 
 Check Docker is ready:
 
@@ -91,17 +93,26 @@ Latest on npm:   2.1.198
 
 ## Authentication
 
-The container inherits your host `claude login` session: `~/.claude` is mounted read-only and **copied into a writable per-container home** at startup, so token refresh works without ever writing back to (or corrupting) your host credentials.
+By default the container authenticates with a **long-lived token** from `claude setup-token`, passed in as `CLAUDE_CODE_OAUTH_TOKEN`. It does **not** use your host's `~/.claude/.credentials.json`.
 
-Check you're logged in on the host:
+Why not just copy the host login? That file holds a short-lived (~8h) access token plus a **single-use** refresh token. A copy that refreshes inside a container rotates the refresh token, the new one is thrown away with the `--rm` container, and the host's copy is now dead — so the host *and* every later run get bounced to `/login`. A setup-token lasts about a year and never refreshes, so there is no chain to fork and nothing to sync.
+
+`run.sh` resolves the token in this order:
+
+1. `CLAUDE_CODE_OAUTH_TOKEN` in your environment (handy for aliases / CI).
+2. `./.oauth-token` — saved by `run.sh` on first use (mode 0600, git-ignored).
+3. Otherwise it prompts: offers to run `claude setup-token` for you, then asks you to paste the token, and saves it.
+
+Manage the saved token:
 
 ```bash
-claude whoami
+./run.sh token          # set or replace it
+./run.sh token clear    # forget it
 ```
 
-If not: `claude login`.
+Your host **user config** is still inherited: `settings.json`, `CLAUDE.md` and `.claude.json` are mounted read-only and copied into the per-container home, so the container never writes back to your host files.
 
-> **Parallel caveat:** OAuth tokens rotate on refresh. Several containers refreshing the same token concurrently can invalidate each other and even log out the host. For short tasks this is rarely hit. For heavy parallel use, set `ANTHROPIC_API_KEY` instead — `run.sh` forwards it automatically when present.
+If neither a token nor a saved file is present, `ANTHROPIC_API_KEY` is forwarded as a fallback. With no auth at all the container exits with instructions.
 
 ### Fresh session (don't inherit the host login)
 
@@ -114,8 +125,9 @@ If you have **multiple Claude Max accounts** and want this box on a different on
 
 Notes:
 - First `--fresh` run **must be interactive** (no task) so you can complete the login; once saved, headless `--fresh` runs reuse it.
-- `--fresh` deliberately ignores `ANTHROPIC_API_KEY` so the new login isn't shadowed by a host key.
+- `--fresh` deliberately ignores the host token and `ANTHROPIC_API_KEY` so the new login isn't shadowed by a host credential.
 - `.sessions/` holds real credentials and is git-ignored. Delete `./.sessions/<instance>/` to forget that account.
+- Unlike the default mode, a `--fresh` login *does* refresh in place — that's fine, because its credential file is bind-mounted from `.sessions/` so the rotated token persists.
 
 ### Resume a previous session
 

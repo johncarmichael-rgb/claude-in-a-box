@@ -1,6 +1,9 @@
 # Per-instance fresh login sessions (--fresh). Contains credentials — never commit.
 .sessions/
 
+# Long-lived auth token for non---fresh runs (from "claude setup-token"). Never commit.
+.oauth-token
+
 # Remembered resource-limit preset (last choice from run.sh). Local preference.
 .resource-preset
 
